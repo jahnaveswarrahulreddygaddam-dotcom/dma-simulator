@@ -1,0 +1,683 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>DMA Simulator</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+<style>
+/* Layout: a bench instrument. Controls on top, one live block diagram, a tick-by-tick trace strip, then a four-way comparison. */
+:root{
+  --bg:#EDF0F5; --surface:#FFFFFF; --surface2:#E3E8F0; --ink:#111B2E; --muted:#4B5870; --line:#C4CDDB;
+  --busbar:#111B2E; --accent:#2A5BD7; --lit:#F2B84B; --on-lit:#2B1D00;
+  --free:#1F7A66; --on-free:#FFFFFF; --work:#E3A21A; --on-work:#2B1D00; --stall:#B8432C; --on-stall:#FFFFFF;
+  --font-body:'IBM Plex Sans',system-ui,-apple-system,'Segoe UI',sans-serif;
+  --font-mono:'IBM Plex Mono',ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0C1220; --surface:#141C30; --surface2:#1C2745; --ink:#E8EDF7; --muted:#A5B2CB; --line:#2B3A5E;
+    --busbar:#8FA4D8; --accent:#7AA7FF;
+    --free:#3FB89B; --on-free:#04231B; --work:#F2B84B; --on-work:#2B1D00; --stall:#E27A62; --on-stall:#2A0C05;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0C1220; --surface:#141C30; --surface2:#1C2745; --ink:#E8EDF7; --muted:#A5B2CB; --line:#2B3A5E;
+  --busbar:#8FA4D8; --accent:#7AA7FF;
+  --free:#3FB89B; --on-free:#04231B; --work:#F2B84B; --on-work:#2B1D00; --stall:#E27A62; --on-stall:#2A0C05;
+  color-scheme:dark;
+}
+*,*::before,*::after{box-sizing:border-box}
+body{
+  background:var(--bg); color:var(--ink); font-family:var(--font-body); font-size:16px; line-height:1.5;
+  padding-block:24px 56px;
+  padding-left:max(16px, env(safe-area-inset-left, 0px));
+  padding-right:max(16px, env(safe-area-inset-right, 0px));
+}
+.wrap{max-width:1080px; margin:0 auto; display:flex; flex-direction:column; gap:20px}
+h1,h2,h3{margin:0; text-wrap:balance}
+h1{font-size:clamp(30px,6vw,44px); line-height:1.1; font-weight:700; letter-spacing:-0.01em}
+h2{font-size:20px; font-weight:600}
+h3{font-size:13px; font-weight:600; letter-spacing:.08em; text-transform:uppercase; color:var(--muted)}
+p{margin:0}
+.eyebrow{font-family:var(--font-mono); font-size:13px; font-weight:500; letter-spacing:.06em; text-transform:uppercase; color:var(--muted)}
+.lead{max-width:62ch; color:var(--muted); font-size:17px}
+header{display:flex; flex-direction:column; gap:8px}
+:focus-visible{outline:3px solid var(--accent); outline-offset:2px}
+
+.panel{background:var(--surface); border:1px solid var(--line); border-radius:14px; padding:20px}
+.controls{display:grid; gap:20px; grid-template-columns:1fr}
+fieldset{border:0; margin:0; padding:0; min-width:0}
+legend{padding:0; margin-bottom:8px; font-size:13px; font-weight:600; letter-spacing:.08em; text-transform:uppercase; color:var(--muted)}
+.modes{display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:8px}
+.mode input{position:absolute; opacity:0; pointer-events:none}
+.mode span{display:flex; align-items:center; justify-content:center; text-align:center; min-height:48px; padding:8px 12px; border:1.5px solid var(--line); border-radius:10px; background:var(--bg); font-weight:600; cursor:pointer}
+.mode input:checked + span{background:var(--ink); color:var(--bg); border-color:var(--ink)}
+.mode input:focus-visible + span{outline:3px solid var(--accent); outline-offset:2px}
+.sliders{display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:20px}
+.slider{display:flex; flex-direction:column; gap:6px; min-width:0}
+.slider label{font-weight:600}
+.slider output{font-family:var(--font-mono); font-weight:700}
+.slider input[type=range]{width:100%; accent-color:var(--accent)}
+.hint{font-size:14px; color:var(--muted)}
+.buttons{display:flex; flex-wrap:wrap; gap:10px; align-items:center}
+button{font:inherit; font-weight:600; min-height:44px; padding:8px 18px; border-radius:10px; border:1.5px solid var(--ink); background:var(--surface); color:var(--ink); cursor:pointer}
+button.primary{background:var(--ink); color:var(--bg)}
+button:disabled{opacity:.4; cursor:not-allowed}
+.speed{display:flex; align-items:center; gap:8px; margin-left:auto; font-size:14px; color:var(--muted)}
+select{font:inherit; min-height:44px; padding:6px 10px; border-radius:10px; border:1.5px solid var(--line); background:var(--surface); color:var(--ink)}
+
+.now{display:flex; flex-direction:column; gap:8px; border-left:6px solid var(--accent)}
+.now .tickno{font-family:var(--font-mono); font-weight:700; font-size:14px; color:var(--muted)}
+.now #explain{font-size:18px; max-width:70ch}
+.now #doneLine{font-weight:600; color:var(--ink); background:var(--surface2); border-radius:8px; padding:10px 12px}
+
+.metrics{display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px}
+.tile{background:var(--surface); border:1px solid var(--line); border-radius:12px; padding:12px 14px; display:flex; flex-direction:column; gap:2px; min-width:0}
+.tile .k{font-size:13px; color:var(--muted); font-weight:500}
+.tile .v{font-family:var(--font-mono); font-weight:700; font-size:28px; line-height:1.2; font-variant-numeric:tabular-nums}
+.tile .v small{font-size:15px; color:var(--muted); font-weight:500}
+.tile.free{border-top:5px solid var(--free)}
+.tile.busy{border-top:5px solid var(--work)}
+.tile.stall{border-top:5px solid var(--stall)}
+
+.diagram{display:grid; gap:14px}
+.row{display:grid; grid-template-columns:1fr 1fr; gap:14px}
+.card{background:var(--surface); border:1px solid var(--line); border-radius:14px; padding:16px; display:flex; flex-direction:column; gap:10px; min-width:0}
+.card.off{opacity:.5}
+.cpustate{display:flex; align-items:center; gap:10px; flex-wrap:wrap}
+.chip{display:inline-flex; align-items:center; justify-content:center; min-width:30px; height:30px; padding:0 10px; border-radius:8px; font-family:var(--font-mono); font-weight:700; font-size:14px; background:var(--surface2); color:var(--ink)}
+.chip[data-cat="U"]{background:var(--free); color:var(--on-free)}
+.chip[data-cat="W"]{background:var(--work); color:var(--on-work)}
+.chip[data-cat="S"]{background:var(--stall); color:var(--on-stall)}
+.cpulabel{font-weight:600; font-size:18px}
+.cells{display:grid; grid-template-columns:repeat(auto-fill,minmax(80px,1fr)); gap:6px}
+.mcell{border:1.5px solid var(--line); border-radius:8px; padding:4px 8px; display:flex; flex-direction:column; gap:0; background:var(--bg); min-width:0}
+.mcell .a{font-family:var(--font-mono); font-size:12px; color:var(--muted)}
+.mcell .v{font-family:var(--font-mono); font-size:14px; font-weight:700}
+.mcell.filled{background:var(--surface2); border-color:var(--ink)}
+.mcell.new{background:var(--lit); color:var(--on-lit); border-color:var(--on-lit)}
+.mcell.new .a{color:var(--on-lit)}
+.dcell{border:1.5px dashed var(--line); border-radius:8px; padding:4px 8px; display:flex; flex-direction:column; background:var(--bg); min-width:0}
+.dcell .a{font-family:var(--font-mono); font-size:13px; font-weight:700}
+.dcell .v{font-size:12px; color:var(--muted)}
+.dcell[data-s="ready"]{border:2px solid var(--work); border-style:solid}
+.dcell[data-s="prep"]{border-style:dashed; border-color:var(--ink)}
+.dcell[data-s="sent"]{opacity:.5; border-style:solid}
+.regs{display:grid; grid-template-columns:auto 1fr; gap:4px 12px; font-size:15px}
+.regs dt{color:var(--muted)}
+.regs dd{margin:0; font-family:var(--font-mono); font-weight:700; min-width:0; overflow-wrap:anywhere}
+.status{font-size:14px; color:var(--muted)}
+
+.bus{display:flex; align-items:center; gap:14px; flex-wrap:wrap}
+.busbar{flex:1; min-width:120px; height:14px; border-radius:7px; background:var(--busbar); transition:background .2s}
+.busbar[data-owner="dma"]{background:var(--lit)}
+.busbar[data-owner="idle"]{opacity:.35}
+.busowner{font-size:15px}
+.busowner b{font-family:var(--font-mono)}
+.signals{list-style:none; margin:0; padding:0; display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:8px}
+.sig{display:flex; flex-direction:column; gap:0; padding:6px 10px; border:1.5px solid var(--line); border-radius:10px; background:var(--surface); min-width:0}
+.sig .top{display:flex; align-items:center; gap:8px}
+.sig .name{font-family:var(--font-mono); font-weight:700; font-size:14px}
+.sig .st{margin-left:auto; font-family:var(--font-mono); font-size:12px; font-weight:700}
+.sig .d{font-size:12px; color:var(--muted)}
+.sig .dot{width:12px; height:12px; border-radius:50%; border:2px solid var(--muted); background:transparent; flex:none}
+.sig.lit{background:var(--lit); color:var(--on-lit); border-color:var(--on-lit)}
+.sig.lit .dot{background:var(--on-lit); border-color:var(--on-lit)}
+.sig.lit .d{color:var(--on-lit)}
+
+.legend{display:flex; flex-wrap:wrap; gap:8px 18px; font-size:14px; color:var(--muted)}
+.legend span{display:inline-flex; align-items:center; gap:6px}
+.sw{display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px; border-radius:5px; font-family:var(--font-mono); font-weight:700; font-size:12px}
+.sw.u{background:var(--free); color:var(--on-free)}
+.sw.w{background:var(--work); color:var(--on-work)}
+.sw.s{background:var(--stall); color:var(--on-stall)}
+.strip{display:flex; flex-wrap:wrap; gap:4px; margin-top:10px}
+.tc{width:30px; height:30px; padding:0; min-height:0; border-radius:6px; border:2px solid transparent; font-family:var(--font-mono); font-weight:700; font-size:13px}
+.tc[data-cat="U"]{background:var(--free); color:var(--on-free)}
+.tc[data-cat="W"]{background:var(--work); color:var(--on-work)}
+.tc[data-cat="S"]{background:var(--stall); color:var(--on-stall)}
+.tc[data-state="todo"]{opacity:.3}
+.tc[data-state="now"]{outline:3px solid var(--accent); outline-offset:1px}
+
+.scroll{overflow-x:auto}
+table{width:100%; border-collapse:collapse; font-size:15px; min-width:640px}
+th,td{text-align:left; padding:10px 10px; border-bottom:1px solid var(--line); vertical-align:middle}
+th{font-size:13px; font-weight:600; color:var(--muted); letter-spacing:.04em}
+td.n{font-family:var(--font-mono); font-weight:700; font-variant-numeric:tabular-nums}
+tr.sel td{background:var(--surface2)}
+.tag{display:inline-block; margin-left:8px; padding:1px 8px; border-radius:999px; background:var(--ink); color:var(--bg); font-size:12px; font-weight:600}
+.barcell{width:34%}
+.bar{display:flex; height:16px; border-radius:4px; overflow:hidden; background:var(--surface2)}
+.bar span{flex-basis:0}
+.bar .u{background:var(--free)} .bar .w{background:var(--work)} .bar .s{background:var(--stall)}
+.takeaway{margin-top:12px; font-weight:500}
+details.panel summary{cursor:pointer; font-weight:600}
+details ul{margin:12px 0 0; padding-left:20px; display:flex; flex-direction:column; gap:6px; max-width:70ch}
+.sr{position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap}
+
+@media (max-width:720px){
+  .row{grid-template-columns:1fr}
+  .speed{margin-left:0}
+  .panel{padding:16px}
+}
+@media (prefers-reduced-motion: reduce){ *{transition:none !important; animation:none !important} }
+</style>
+
+<main class="wrap">
+  <header>
+    <p class="eyebrow">25ESCS04 · Computer Organization and Architecture</p>
+    <h1>DMA Simulator</h1>
+    <p class="lead">Move one block of data from an I/O device into memory and watch what the CPU does. One tick is one bus cycle. Pick a method, then step through it or press Play.</p>
+  </header>
+
+  <section class="panel controls" aria-label="Controls">
+    <fieldset>
+      <legend>Transfer method</legend>
+      <div class="modes" id="modes">
+        <label class="mode"><input type="radio" name="method" id="m-pio" value="pio" checked><span>Programmed I/O</span></label>
+        <label class="mode"><input type="radio" name="method" id="m-int" value="int"><span>Interrupt-driven I/O</span></label>
+        <label class="mode"><input type="radio" name="method" id="m-cs" value="cs"><span>DMA: cycle stealing</span></label>
+        <label class="mode"><input type="radio" name="method" id="m-burst" value="burst"><span>DMA: burst</span></label>
+      </div>
+    </fieldset>
+    <div class="sliders">
+      <div class="slider">
+        <label for="nRange">Block size: <output id="nOut" for="nRange">8</output> words</label>
+        <input type="range" id="nRange" min="4" max="16" step="1" value="8">
+      </div>
+      <div class="slider">
+        <label for="dRange">Device delay: <output id="dOut" for="dRange">2</output> ticks per word</label>
+        <input type="range" id="dRange" min="1" max="4" step="1" value="2">
+        <p class="hint">Burst mode ignores this: it assumes the device has the whole block buffered.</p>
+      </div>
+    </div>
+    <div class="buttons">
+      <button type="button" id="stepBtn">Step</button>
+      <button type="button" id="playBtn" class="primary">Play</button>
+      <button type="button" id="resetBtn">Reset</button>
+      <label class="speed" for="speedSel">Speed
+        <select id="speedSel">
+          <option value="900">Slow</option>
+          <option value="450" selected>Normal</option>
+          <option value="150">Fast</option>
+        </select>
+      </label>
+    </div>
+  </section>
+
+  <section class="panel now" aria-label="What is happening" aria-live="polite">
+    <p class="tickno" id="tickNo">Tick 0</p>
+    <p id="explain"></p>
+    <p id="doneLine" hidden></p>
+  </section>
+
+  <section class="metrics" aria-label="Live counters">
+    <div class="tile"><span class="k">Tick</span><span class="v" id="mTick">0<small> / 0</small></span></div>
+    <div class="tile"><span class="k">Words in memory</span><span class="v" id="mMem">0<small> / 0</small></span></div>
+    <div class="tile free"><span class="k">CPU free (running programs)</span><span class="v" id="mFree">0</span></div>
+    <div class="tile busy"><span class="k">CPU busy with I/O</span><span class="v" id="mBusy">0</span></div>
+    <div class="tile stall"><span class="k">CPU stalled (bus taken)</span><span class="v" id="mStall">0</span></div>
+  </section>
+
+  <section class="diagram" aria-label="System diagram">
+    <div class="row">
+      <div class="card" id="cpuCard">
+        <h3>CPU</h3>
+        <div class="cpustate"><span class="chip" id="cpuChip" data-cat="">–</span><span class="cpulabel" id="cpuLabel">Ready to start</span></div>
+        <p class="status" id="cpuState">Not started</p>
+      </div>
+      <div class="card">
+        <h3>Main memory (destination)</h3>
+        <div class="cells" id="memCells"></div>
+      </div>
+    </div>
+
+    <div class="bus">
+      <div class="busbar" id="busBar" data-owner="cpu" aria-hidden="true"></div>
+      <p class="busowner">System bus owner: <b id="busOwner">CPU</b></p>
+    </div>
+
+    <ul class="signals" id="signals" aria-label="Control signals">
+      <li class="sig" id="sig-dreq"><div class="top"><span class="dot" aria-hidden="true"></span><span class="name">DREQ</span><span class="st">off</span></div><span class="d">device request</span></li>
+      <li class="sig" id="sig-hrq"><div class="top"><span class="dot" aria-hidden="true"></span><span class="name">HRQ</span><span class="st">off</span></div><span class="d">bus request to CPU</span></li>
+      <li class="sig" id="sig-hlda"><div class="top"><span class="dot" aria-hidden="true"></span><span class="name">HLDA</span><span class="st">off</span></div><span class="d">bus grant from CPU</span></li>
+      <li class="sig" id="sig-dack"><div class="top"><span class="dot" aria-hidden="true"></span><span class="name">DACK</span><span class="st">off</span></div><span class="d">request acknowledged</span></li>
+      <li class="sig" id="sig-int"><div class="top"><span class="dot" aria-hidden="true"></span><span class="name">INT</span><span class="st">off</span></div><span class="d">interrupt to CPU</span></li>
+    </ul>
+
+    <div class="row">
+      <div class="card" id="dmaCard">
+        <h3>DMA controller</h3>
+        <p class="status" id="dmaStatus">Idle</p>
+        <dl class="regs">
+          <dt>Address register</dt><dd id="regAddr">–</dd>
+          <dt>Word count register</dt><dd id="regCnt">–</dd>
+          <dt>Control register</dt><dd id="regCtl">–</dd>
+        </dl>
+      </div>
+      <div class="card">
+        <h3>I/O device (source buffer)</h3>
+        <div class="cells" id="devCells"></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel" aria-label="Tick trace">
+    <h2>What the CPU did, tick by tick</h2>
+    <div class="legend">
+      <span><i class="sw u">U</i> Free: running a program</span>
+      <span><i class="sw w">W</i> Busy with I/O work</span>
+      <span><i class="sw s">S</i> Stalled: DMA has the bus</span>
+    </div>
+    <div class="strip" id="strip"></div>
+    <p class="hint" style="margin-top:10px">Click any tick to jump to it. Faded ticks have not run yet.</p>
+  </section>
+
+  <section class="panel" aria-label="Comparison">
+    <h2>All four methods, same block</h2>
+    <p class="hint" id="cmpHint"></p>
+    <div class="scroll">
+      <table>
+        <caption class="sr">Comparison of the four transfer methods</caption>
+        <thead><tr><th>Method</th><th>Total ticks</th><th>CPU free</th><th>CPU busy</th><th>CPU stalled</th><th>Share of time (bar length = total ticks)</th></tr></thead>
+        <tbody id="cmpBody"></tbody>
+      </table>
+    </div>
+    <p class="takeaway" id="takeaway"></p>
+  </section>
+
+  <details class="panel">
+    <summary>How the model counts</summary>
+    <ul>
+      <li>One tick is one bus cycle. The device needs the chosen number of ticks to prepare each word.</li>
+      <li>Programmed I/O: the CPU polls the status register through every wait tick, then spends 2 ticks reading and storing the word.</li>
+      <li>Interrupt-driven I/O: the CPU runs other work while the device prepares a word. Each word then costs 4 CPU ticks: 2 to save and restore context, 2 to read and store.</li>
+      <li>DMA, both modes: the CPU spends 2 ticks writing the address, count and control registers, and 1 tick on a completion routine after the interrupt.</li>
+      <li>Cycle stealing: the CPU keeps running during the device wait. DMA then takes 1 bus cycle per word, and the CPU is stalled for that cycle.</li>
+      <li>Burst: 1 tick for HRQ, 1 tick for HLDA, then 1 tick per word with the CPU stalled throughout. It assumes a fast device that holds the whole block.</li>
+      <li>These costs are small round numbers chosen for clarity. Real costs depend on the processor, the bus and the device.</li>
+    </ul>
+  </details>
+</main>
+
+<script>
+(function () {
+  'use strict';
+  var BASE = 0x100;
+  var MODES = {
+    pio:   { id: 'pio',   label: 'Programmed I/O',       dma: false },
+    int:   { id: 'int',   label: 'Interrupt-driven I/O', dma: false },
+    cs:    { id: 'cs',    label: 'DMA: cycle stealing',  dma: true },
+    burst: { id: 'burst', label: 'DMA: burst',           dma: true }
+  };
+  var ORDER = ['pio', 'int', 'cs', 'burst'];
+  var CATNAME = { U: 'Free: running a program', W: 'Busy with I/O work', S: 'Stalled: DMA has the bus' };
+  var CATSHORT = { U: 'Free', W: 'Busy with I/O', S: 'Stalled' };
+  var OWNER = { cpu: 'CPU', dma: 'DMA controller', idle: 'Nobody (hand-over)' };
+  var SIGS = ['dreq', 'hrq', 'hlda', 'dack', 'int'];
+
+  function hex(n) { return '0x' + n.toString(16).toUpperCase(); }
+  function tk(n) { return n + (n === 1 ? ' tick' : ' ticks'); }
+
+  function build(mode, N, D) {
+    var T = [];
+    var mem = 0, addr = null, cnt = null, ctl = false;
+    var w, d;
+    function push(o) {
+      T.push({
+        cat: o.cat,
+        label: o.label,
+        text: o.text,
+        bus: o.bus || 'cpu',
+        sig: o.sig || {},
+        dev: o.dev || 'prep',
+        word: (o.word === undefined ? -1 : o.word),
+        mem: mem, addr: addr, cnt: cnt, ctl: ctl
+      });
+    }
+    function setup() {
+      addr = BASE;
+      push({ cat: 'W', label: 'Writing the DMA address register', dev: 'prep',
+        text: 'CPU writes the start address ' + hex(BASE) + ' into the DMA address register.' });
+      cnt = N; ctl = true;
+      push({ cat: 'W', label: 'Starting the DMA controller', dev: 'prep',
+        text: 'CPU writes the word count (' + N + ') and the control bits (device to memory), then starts the controller. After this the CPU is free.' });
+    }
+
+    if (mode === 'pio') {
+      for (w = 0; w < N; w++) {
+        for (d = 0; d < D; d++) {
+          push({ cat: 'W', label: 'Polling the status register', dev: 'prep',
+            text: 'CPU polls the device status register. Word ' + (w + 1) + ' is not ready yet, so this poll is wasted.' });
+        }
+        push({ cat: 'W', label: 'Reading the word', dev: 'ready', word: w,
+          text: 'Status shows ready. CPU reads word ' + (w + 1) + ' from the device into a CPU register.' });
+        mem = w + 1;
+        push({ cat: 'W', label: 'Storing the word', dev: 'prep', word: w,
+          text: 'CPU stores word ' + (w + 1) + ' into memory at ' + hex(BASE + w) + '.' });
+      }
+    } else if (mode === 'int') {
+      for (w = 0; w < N; w++) {
+        for (d = 0; d < D; d++) {
+          push({ cat: 'U', label: 'Running another program', dev: 'prep',
+            text: 'CPU runs another program while the device prepares word ' + (w + 1) + '.' });
+        }
+        push({ cat: 'W', label: 'Saving context', dev: 'ready', sig: { int: 1 },
+          text: 'Word ' + (w + 1) + ' is ready. The device raises INT. The CPU saves its context and jumps to the interrupt service routine.' });
+        push({ cat: 'W', label: 'Reading the word', dev: 'ready', word: w,
+          text: 'The service routine reads word ' + (w + 1) + ' from the device into a CPU register.' });
+        mem = w + 1;
+        push({ cat: 'W', label: 'Storing the word', dev: 'prep', word: w,
+          text: 'The routine stores word ' + (w + 1) + ' into memory at ' + hex(BASE + w) + '.' });
+        push({ cat: 'W', label: 'Restoring context', dev: 'prep',
+          text: 'The routine restores the saved context and returns to the interrupted program.' });
+      }
+    } else if (mode === 'cs') {
+      setup();
+      for (w = 0; w < N; w++) {
+        for (d = 0; d < D; d++) {
+          var last = (d === D - 1);
+          push({ cat: 'U', label: 'Running another program', dev: last ? 'ready' : 'prep',
+            sig: last ? { dreq: 1 } : {},
+            text: last
+              ? 'The device has word ' + (w + 1) + ' ready and raises DREQ. The CPU keeps running its program.'
+              : 'CPU runs another program while the device prepares word ' + (w + 1) + '.' });
+        }
+        mem = w + 1; addr = BASE + w + 1; cnt = N - w - 1;
+        push({ cat: 'S', label: 'Stalled: DMA has the bus', bus: 'dma', dev: 'prep', word: w,
+          sig: { dreq: 1, hrq: 1, hlda: 1, dack: 1 },
+          text: 'DMA raises HRQ, the CPU answers HLDA and gives up one bus cycle. DMA moves word ' + (w + 1) + ' to memory at ' + hex(BASE + w) + '. Address +1, count -1.' });
+      }
+      ctl = false;
+      push({ cat: 'W', label: 'Completion routine', dev: 'prep', sig: { int: 1 },
+        text: 'The count reached 0. DMA raises INT and the CPU runs a short completion routine.' });
+    } else if (mode === 'burst') {
+      setup();
+      push({ cat: 'U', label: 'Finishing its bus cycle', dev: 'ready', sig: { dreq: 1, hrq: 1 },
+        text: 'The device has the whole block buffered and raises DREQ. DMA raises HRQ. The CPU finishes its current bus cycle.' });
+      push({ cat: 'S', label: 'Stalled: DMA has the bus', bus: 'idle', dev: 'ready', sig: { dreq: 1, hrq: 1, hlda: 1 },
+        text: 'The CPU releases the buses and answers HLDA. DMA now owns the bus.' });
+      for (w = 0; w < N; w++) {
+        mem = w + 1; addr = BASE + w + 1; cnt = N - w - 1;
+        push({ cat: 'S', label: 'Stalled: DMA has the bus', bus: 'dma', dev: 'ready', word: w,
+          sig: { dreq: 1, hrq: 1, hlda: 1, dack: 1 },
+          text: 'Burst: DMA keeps the bus and moves word ' + (w + 1) + ' to memory at ' + hex(BASE + w) + '. Address +1, count -1.' });
+      }
+      ctl = false;
+      push({ cat: 'W', label: 'Completion routine', bus: 'cpu', dev: 'ready', sig: { int: 1 },
+        text: 'Block done. DMA drops HRQ, hands the bus back and raises INT. The CPU runs a short completion routine.' });
+    }
+    return T;
+  }
+
+  function stats(T, upto) {
+    var s = { ticks: upto, U: 0, W: 0, S: 0, mem: 0 };
+    for (var k = 0; k < upto; k++) { s[T[k].cat] += 1; }
+    if (upto > 0) { s.mem = T[upto - 1].mem; }
+    return s;
+  }
+
+  // expose the pure model for checks
+  window.__dma = { build: build, stats: stats };
+
+  function $(id) { return document.getElementById(id); }
+  function el(tag, cls, text) {
+    var e = document.createElement(tag);
+    if (cls) { e.className = cls; }
+    if (text !== undefined) { e.textContent = text; }
+    return e;
+  }
+
+  var state = { mode: 'pio', N: 8, D: 2, i: 0, T: [], playing: false, timer: null, speed: 450 };
+  var memEls = [], devEls = [], stripEls = [];
+
+  function updateButtons() {
+    var len = state.T.length;
+    $('playBtn').textContent = state.playing ? 'Pause' : (state.i >= len && len > 0 ? 'Replay' : 'Play');
+    $('stepBtn').disabled = state.i >= len || state.playing;
+    $('resetBtn').disabled = state.i === 0 && !state.playing;
+  }
+
+  function stopPlay() {
+    state.playing = false;
+    if (state.timer) { clearInterval(state.timer); state.timer = null; }
+    updateButtons();
+  }
+
+  function stepOnce() {
+    if (state.i >= state.T.length) { stopPlay(); return; }
+    state.i += 1;
+    render();
+    if (state.i >= state.T.length) { stopPlay(); }
+  }
+
+  function startPlay() {
+    if (state.i >= state.T.length) { state.i = 0; render(); }
+    state.playing = true;
+    if (state.timer) { clearInterval(state.timer); }
+    state.timer = setInterval(stepOnce, state.speed);
+    updateButtons();
+  }
+
+  function buildCells() {
+    var N = state.N, k, c, a, v;
+    var memBox = $('memCells'), devBox = $('devCells'), strip = $('strip');
+    memBox.textContent = ''; devBox.textContent = ''; strip.textContent = '';
+    memEls = []; devEls = []; stripEls = [];
+    for (k = 0; k < N; k++) {
+      c = el('div', 'mcell');
+      a = el('span', 'a', hex(BASE + k));
+      v = el('span', 'v', '-');
+      c.appendChild(a); c.appendChild(v);
+      memBox.appendChild(c);
+      memEls.push({ box: c, val: v });
+
+      c = el('div', 'dcell');
+      c.setAttribute('data-s', 'wait');
+      a = el('span', 'a', 'D' + (k + 1));
+      v = el('span', 'v', 'waiting');
+      c.appendChild(a); c.appendChild(v);
+      devBox.appendChild(c);
+      devEls.push({ box: c, val: v });
+    }
+    for (k = 0; k < state.T.length; k++) {
+      (function (idx) {
+        var b = el('button', 'tc', state.T[idx].cat);
+        b.type = 'button';
+        b.setAttribute('data-cat', state.T[idx].cat);
+        b.setAttribute('data-state', 'todo');
+        b.setAttribute('aria-label', 'Jump to tick ' + (idx + 1) + ': ' + CATNAME[state.T[idx].cat]);
+        b.addEventListener('click', function () {
+          stopPlay();
+          state.i = idx + 1;
+          render();
+        });
+        strip.appendChild(b);
+        stripEls.push(b);
+      })(k);
+    }
+  }
+
+  function render() {
+    var T = state.T, i = state.i, len = T.length, N = state.N;
+    var mode = MODES[state.mode];
+    var t = i > 0 ? T[i - 1] : null;
+    var s = stats(T, i);
+    var k;
+
+    $('tickNo').textContent = i === 0 ? 'Ready: tick 0 of ' + len : 'Tick ' + i + ' of ' + len;
+    $('explain').textContent = t ? t.text : 'Press Step to run one bus cycle, or Play to run the whole transfer. ' + mode.label + ' is selected.';
+    var done = $('doneLine');
+    if (i >= len && len > 0) {
+      done.hidden = false;
+      done.textContent = 'Finished: all ' + N + ' words are in memory after ' + tk(len) + '. The CPU ran its own programs for ' + tk(s.U) +
+        ', was busy with the transfer for ' + tk(s.W) + ' and was stalled for ' + tk(s.S) + '.';
+    } else {
+      done.hidden = true;
+      done.textContent = '';
+    }
+
+    $('mTick').innerHTML = '';
+    $('mTick').appendChild(document.createTextNode(String(i)));
+    $('mTick').appendChild(el('small', '', ' / ' + len));
+    $('mMem').innerHTML = '';
+    $('mMem').appendChild(document.createTextNode(String(s.mem)));
+    $('mMem').appendChild(el('small', '', ' / ' + N));
+    $('mFree').textContent = String(s.U);
+    $('mBusy').textContent = String(s.W);
+    $('mStall').textContent = String(s.S);
+
+    // CPU
+    var chip = $('cpuChip');
+    chip.setAttribute('data-cat', t ? t.cat : '');
+    chip.textContent = t ? t.cat : '-';
+    $('cpuLabel').textContent = t ? t.label : 'Ready to start';
+    $('cpuState').textContent = t ? CATNAME[t.cat] : 'Not started';
+
+    // memory
+    var filled = t ? t.mem : 0;
+    for (k = 0; k < N; k++) {
+      var isFilled = k < filled;
+      var isNew = !!t && t.word === k && t.mem === k + 1;
+      memEls[k].box.className = 'mcell' + (isFilled ? ' filled' : '') + (isNew ? ' new' : '');
+      memEls[k].val.textContent = isFilled ? 'D' + (k + 1) : '-';
+    }
+
+    // device buffer
+    for (k = 0; k < N; k++) {
+      var ds, dt;
+      if (k < filled) { ds = 'sent'; dt = 'sent'; }
+      else if (state.mode === 'burst') { ds = 'ready'; dt = 'buffered'; }
+      else if (k === filled) {
+        var dv = t ? t.dev : 'prep';
+        if (dv === 'ready') { ds = 'ready'; dt = 'ready'; } else { ds = 'prep'; dt = 'preparing'; }
+      } else { ds = 'wait'; dt = 'waiting'; }
+      devEls[k].box.setAttribute('data-s', ds);
+      devEls[k].val.textContent = dt;
+    }
+
+    // bus
+    var owner = t ? t.bus : 'cpu';
+    $('busBar').setAttribute('data-owner', owner);
+    $('busOwner').textContent = OWNER[owner];
+
+    // signals
+    for (k = 0; k < SIGS.length; k++) {
+      var name = SIGS[k];
+      var lit = !!(t && t.sig[name]);
+      var li = $('sig-' + name);
+      li.className = 'sig' + (lit ? ' lit' : '');
+      li.querySelector('.st').textContent = lit ? 'on' : 'off';
+    }
+
+    // DMA card
+    var card = $('dmaCard');
+    if (!mode.dma) {
+      card.className = 'card off';
+      $('dmaStatus').textContent = 'Not used in this method';
+      $('regAddr').textContent = '-';
+      $('regCnt').textContent = '-';
+      $('regCtl').textContent = '-';
+    } else {
+      card.className = 'card';
+      $('regAddr').textContent = (t && t.addr !== null) ? hex(t.addr) : '-';
+      $('regCnt').textContent = (t && t.cnt !== null) ? String(t.cnt) : '-';
+      $('regCtl').textContent = (t && t.ctl) ? 'device to memory, ' + (state.mode === 'burst' ? 'burst' : 'cycle stealing') : '-';
+      var ds2;
+      if (!t) { ds2 = 'Idle'; }
+      else if (t.cat === 'S') { ds2 = 'Has the bus and is moving data'; }
+      else if (t.ctl) { ds2 = 'Armed, waiting for the device'; }
+      else { ds2 = 'Idle'; }
+      $('dmaStatus').textContent = ds2;
+    }
+
+    // strip
+    for (k = 0; k < stripEls.length; k++) {
+      stripEls[k].setAttribute('data-state', k < i ? (k === i - 1 ? 'now' : 'done') : 'todo');
+    }
+
+    updateButtons();
+  }
+
+  function renderCompare() {
+    var body = $('cmpBody');
+    body.textContent = '';
+    var rows = [], maxTotal = 1, j;
+    for (j = 0; j < ORDER.length; j++) {
+      var T2 = build(ORDER[j], state.N, state.D);
+      var s2 = stats(T2, T2.length);
+      rows.push({ id: ORDER[j], s: s2 });
+      if (T2.length > maxTotal) { maxTotal = T2.length; }
+    }
+    var fastest = rows[0], least = rows[0];
+    for (j = 0; j < rows.length; j++) {
+      var r = rows[j];
+      if (r.s.ticks < fastest.s.ticks) { fastest = r; }
+      if ((r.s.W + r.s.S) < (least.s.W + least.s.S)) { least = r; }
+      var tr = el('tr', r.id === state.mode ? 'sel' : '');
+      var th = el('td', '', MODES[r.id].label);
+      if (r.id === state.mode) { th.appendChild(el('span', 'tag', 'selected')); }
+      tr.appendChild(th);
+      tr.appendChild(el('td', 'n', String(r.s.ticks)));
+      tr.appendChild(el('td', 'n', String(r.s.U)));
+      tr.appendChild(el('td', 'n', String(r.s.W)));
+      tr.appendChild(el('td', 'n', String(r.s.S)));
+      var bc = el('td', 'barcell');
+      var bar = el('div', 'bar');
+      bar.style.width = (r.s.ticks / maxTotal * 100).toFixed(1) + '%';
+      var parts = [['u', r.s.U, 'Free'], ['w', r.s.W, 'Busy'], ['s', r.s.S, 'Stalled']];
+      for (var p = 0; p < parts.length; p++) {
+        if (parts[p][1] > 0) {
+          var seg = el('span', parts[p][0]);
+          seg.style.flexGrow = String(parts[p][1]);
+          seg.title = parts[p][2] + ': ' + parts[p][1] + ' ticks';
+          bar.appendChild(seg);
+        }
+      }
+      bc.appendChild(bar);
+      tr.appendChild(bc);
+      body.appendChild(tr);
+    }
+    $('cmpHint').textContent = 'Block of ' + state.N + ' words, device delay ' + state.D + ' ticks per word. Green is free CPU time, amber is I/O work, red is stalled.';
+    $('takeaway').textContent = 'Fastest: ' + MODES[fastest.id].label + ' (' + fastest.s.ticks + ' ticks). ' +
+      'Least CPU time lost to the transfer, busy plus stalled: ' + MODES[least.id].label + ' (' + (least.s.W + least.s.S) + ' ticks).';
+  }
+
+  function rebuild() {
+    stopPlay();
+    state.T = build(state.mode, state.N, state.D);
+    state.i = 0;
+    buildCells();
+    render();
+    renderCompare();
+  }
+
+  // events
+  var radios = document.querySelectorAll('input[name="method"]');
+  Array.prototype.forEach.call(radios, function (r) {
+    r.addEventListener('change', function () {
+      if (r.checked) { state.mode = r.value; rebuild(); }
+    });
+  });
+  $('nRange').addEventListener('input', function (e) {
+    state.N = parseInt(e.target.value, 10);
+    $('nOut').textContent = String(state.N);
+    rebuild();
+  });
+  $('dRange').addEventListener('input', function (e) {
+    state.D = parseInt(e.target.value, 10);
+    $('dOut').textContent = String(state.D);
+    rebuild();
+  });
+  $('stepBtn').addEventListener('click', function () { stopPlay(); stepOnce(); });
+  $('playBtn').addEventListener('click', function () { if (state.playing) { stopPlay(); } else { startPlay(); } });
+  $('resetBtn').addEventListener('click', function () { stopPlay(); state.i = 0; render(); });
+  $('speedSel').addEventListener('change', function (e) {
+    state.speed = parseInt(e.target.value, 10);
+    if (state.playing) { startPlay(); }
+  });
+
+  rebuild();
+})();
+</script>
+
+</body></html>
